@@ -20,7 +20,7 @@ import os
 
 import requests
 
-from export_session_env import build_cookie_string
+from export_session_env import build_session_state_json
 
 API_BASE = "https://api.render.com/v1"
 
@@ -31,7 +31,7 @@ def main():
     if not api_key or not service_id:
         raise SystemExit("RENDER_API_KEY and RENDER_SERVICE_ID must be set")
 
-    cookie_string = build_cookie_string()
+    session_state = build_session_state_json()
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     resp = requests.get(f"{API_BASE}/services/{service_id}/env-vars", headers=headers)
@@ -39,15 +39,15 @@ def main():
     env_vars = [{"key": item["envVar"]["key"], "value": item["envVar"]["value"]} for item in resp.json()]
 
     for item in env_vars:
-        if item["key"] == "BECKETT_COOKIES":
-            item["value"] = cookie_string
+        if item["key"] == "BECKETT_SESSION_STATE":
+            item["value"] = session_state
             break
     else:
-        env_vars.append({"key": "BECKETT_COOKIES", "value": cookie_string})
+        env_vars.append({"key": "BECKETT_SESSION_STATE", "value": session_state})
 
     resp = requests.put(f"{API_BASE}/services/{service_id}/env-vars", headers=headers, json=env_vars)
     resp.raise_for_status()
-    print("Updated BECKETT_COOKIES on Render.")
+    print("Updated BECKETT_SESSION_STATE on Render.")
 
     resp = requests.post(f"{API_BASE}/services/{service_id}/deploys", headers=headers, json={})
     resp.raise_for_status()

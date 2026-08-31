@@ -1,110 +1,140 @@
 """
 Flask app: serves the BGS lookup playground (static frontend) and proxies
-submission/job lookups to beckett.com by replaying a session cookie jar
-server-side, so the browser never sees credentials.
+submission/job lookups to beckett.com.
 
-Session comes from the BECKETT_COOKIES env var (a "name=value; name2=value2"
-Cookie header string). Generate/refresh it with:
-    python3 scripts/auto_login.py
-    python3 scripts/export_session_env.py
+Calls run through a real headless Chromium page (Playwright), executing
+fetch() inside the authenticated page's own JS context. beckett.com's WAF
+blocks plain HTTP clients (Node's https, Python's requests) when called from
+cloud/datacenter IPs, but lets real-browser traffic through -- confirmed by
+testing the same code from a residential IP (works) vs Render's IP (403),
+and a scripted client (blocked) vs headless Chromium (works) from the same
+datacenter IP.
 
-Deliberately uses Python's `requests` rather than a Node-based backend --
-beckett.com's CDN (CloudFront) fingerprints and blocks Node's TLS client but
-not requests/curl, confirmed by interleaved live testing.
+A pre-captured session (BECKETT_SESSION_STATE -- the full contents of
+output/storage_state.json, produced by auto_login.py and pushed by the
+GitHub Actions refresh workflow) is loaded into the browser context so no
+login happens per request.
 """
+import json
 import os
-import time
+import threading
 
-import requests
 from flask import Flask, jsonify, request
+from playwright.sync_api import sync_playwright
 
 BASE = "https://www.beckett.com"
-USER_AGENT = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/145.0.0.0 Safari/537.36"
-)
 
 app = Flask(__name__, static_folder=".", static_url_path="")
 
+_playwright = None
+_browser = None
+_browser_lock = threading.Lock()
 
-def build_session():
-    cookie_string = os.environ.get("BECKETT_COOKIES")
-    if not cookie_string:
-        raise RuntimeError("Missing BECKETT_COOKIES environment variable")
+FETCH_SCRIPT = """
+async ({ url, method, body, headers }) => {
+    const resp = await fetch(url, {
+        method,
+        headers: Object.assign(
+            { 'content-type': 'application/json', accept: 'application/json, text/plain, */*' },
+            headers || {}
+        ),
+        body: body !== undefined && body !== null ? JSON.stringify(body) : undefined,
+        credentials: 'include',
+    });
+    const text = await resp.text();
+    return { status: resp.status, text };
+}
+"""
 
-    session = requests.Session()
-    csrf_token = None
-    for pair in cookie_string.split(";"):
-        if "=" not in pair:
-            continue
-        name, _, value = pair.strip().partition("=")
-        session.cookies.set(name, value, domain=".beckett.com")
-        if name == "csrf-token":
-            csrf_token = value
 
-    session.headers.update(
-        {
-            "accept": "application/json, text/plain, */*",
-            "content-type": "application/json",
-            "user-agent": USER_AGENT,
-        }
+def get_browser():
+    global _playwright, _browser
+    with _browser_lock:
+        if _browser is None:
+            _playwright = sync_playwright().start()
+            _browser = _playwright.chromium.launch(headless=True)
+    return _browser
+
+
+def load_storage_state():
+    raw = os.environ.get("BECKETT_SESSION_STATE")
+    if not raw:
+        raise RuntimeError("Missing BECKETT_SESSION_STATE environment variable")
+    return json.loads(raw)
+
+
+def new_authenticated_page(browser):
+    context = browser.new_context(storage_state=load_storage_state())
+    context.route(
+        "**/*",
+        lambda route: route.abort()
+        if route.request.resource_type in ("image", "font", "stylesheet", "media")
+        else route.continue_(),
     )
-    if csrf_token:
-        session.headers["csrf-token"] = csrf_token
-    return session
+    page = context.new_page()
+    page.goto(f"{BASE}/", wait_until="domcontentloaded")
+    return context, page
 
 
-def get_user_id(session):
-    mmr = session.cookies.get("mmr", domain=".beckett.com")
-    resp = session.post(f"{BASE}/api/account/data", json={"mmr": mmr})
-    resp.raise_for_status()
-    return resp.json()["user_data"]["user_id"]
+def api_call(page, method, url, body=None, headers=None):
+    result = page.evaluate(
+        FETCH_SCRIPT, {"url": url, "method": method, "body": body, "headers": headers or {}}
+    )
+    if result["status"] >= 400:
+        raise RuntimeError(f"{method} {url} failed: HTTP {result['status']}")
+    return json.loads(result["text"])
 
 
-def fetch_grading_order(session, job_id):
-    session.headers["user-id"] = get_user_id(session)
-    resp = session.get(f"{BASE}/api/account/grading_order/{job_id}")
-    resp.raise_for_status()
-    return resp.json()
+def csrf_header(page):
+    token = next((c["value"] for c in page.context.cookies() if c["name"] == "csrf-token"), None)
+    return {"csrf-token": token} if token else {}
 
 
-def job_id_for_submission(session, submission_id, limit=50):
-    session.headers["user-id"] = get_user_id(session)
-    page = 1
+def get_user_id(page):
+    mmr = next((c["value"] for c in page.context.cookies() if c["name"] == "mmr"), "")
+    data = api_call(page, "POST", f"{BASE}/api/account/data", {"mmr": mmr}, headers=csrf_header(page))
+    return data["user_data"]["user_id"]
+
+
+def fetch_grading_order(page, job_id, user_id):
+    headers = {"user-id": user_id, **csrf_header(page)}
+    return api_call(page, "GET", f"{BASE}/api/account/grading_order/{job_id}", headers=headers)
+
+
+def job_id_for_submission(page, submission_id, user_id, limit=50):
+    page_num = 1
+    headers = {"user-id": user_id, **csrf_header(page)}
     while True:
-        resp = None
+        data = None
         for _ in range(3):
-            resp = session.get(
-                f"{BASE}/api/account/grading_orders",
-                params={"page": page, "limit": limit, "sort_by": "invoice_id", "order_by": "desc"},
-            )
-            if resp.status_code == 502:
-                time.sleep(1.5)
-                continue
-            break
-        resp.raise_for_status()
+            try:
+                data = api_call(
+                    page,
+                    "GET",
+                    f"{BASE}/api/account/grading_orders?page={page_num}&limit={limit}&sort_by=invoice_id&order_by=desc",
+                    headers=headers,
+                )
+                break
+            except RuntimeError as e:
+                if "HTTP 502" in str(e):
+                    continue
+                raise
+        if data is None:
+            raise RuntimeError("grading_orders failed after retries")
 
-        data = resp.json()
         for order in data.get("data", []):
             if str(order.get("bgs_online_sub_id")) == str(submission_id):
                 return order["job_id"]
 
         total_pages = data["meta"]["pagination"]["total_pages"]
-        if page >= total_pages:
+        if page_num >= total_pages:
             return None
-        page += 1
+        page_num += 1
 
 
 @app.route("/")
 def index():
     return app.send_static_file("index.html")
-
-
-@app.after_request
-def disable_static_caching(response):
-    if request.path in ("/", "/index.html", "/style.css", "/app.js"):
-        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-    return response
 
 
 @app.route("/api/lookup")
@@ -115,21 +145,25 @@ def lookup():
     if not submission_id and not job_id:
         return jsonify({"error": "Provide ?submissionId= or ?jobId="}), 400
 
+    context = None
     try:
-        session = build_session()
-    except RuntimeError as e:
-        return jsonify({"error": str(e)}), 500
+        browser = get_browser()
+        context, page = new_authenticated_page(browser)
 
-    try:
+        user_id = get_user_id(page)
         resolved_job_id = job_id
         if not resolved_job_id:
-            resolved_job_id = job_id_for_submission(session, submission_id)
+            resolved_job_id = job_id_for_submission(page, submission_id, user_id)
             if resolved_job_id is None:
                 return jsonify({"error": f"No order found for submission {submission_id}"}), 404
-        data = fetch_grading_order(session, resolved_job_id)
+
+        data = fetch_grading_order(page, resolved_job_id, user_id)
         return jsonify(data)
-    except requests.HTTPError as e:
+    except Exception as e:
         return jsonify({"error": str(e)}), 502
+    finally:
+        if context is not None:
+            context.close()
 
 
 if __name__ == "__main__":

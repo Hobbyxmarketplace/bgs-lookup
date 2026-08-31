@@ -4,8 +4,8 @@ services:
     env: python
     plan: free
     rootDir: web
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
+    startCommand: gunicorn app:app --timeout 60
     envVars:
-      - key: BECKETT_COOKIES
+      - key: BECKETT_SESSION_STATE
         sync: false
