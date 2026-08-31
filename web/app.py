@@ -25,6 +25,7 @@ import concurrent.futures
 import json
 import os
 import threading
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request
 from playwright.sync_api import sync_playwright
@@ -100,19 +101,32 @@ def set_session_state(state):
     reset_lookup_page()
 
 
-def block_heavy_resources(context, block_scripts=False):
+def block_heavy_resources(context, block_scripts=False, allow_scripts_from=None):
     blocked_types = {"image", "font", "stylesheet", "media"}
     if block_scripts:
         blocked_types.add("script")
-    context.route(
-        "**/*",
-        lambda route: route.abort() if route.request.resource_type in blocked_types else route.continue_(),
-    )
+
+    def handler(route):
+        req = route.request
+        if req.resource_type in blocked_types:
+            route.abort()
+            return
+        if allow_scripts_from and req.resource_type == "script":
+            host = urlparse(req.url).hostname or ""
+            if host != allow_scripts_from and not host.endswith("." + allow_scripts_from):
+                route.abort()
+                return
+        route.continue_()
+
+    context.route("**/*", handler)
 
 
 def perform_login(browser, email, password):
     context = browser.new_context()
-    block_heavy_resources(context)
+    # Only Beckett's own JS is needed (it enables the submit button once
+    # the form validates) -- third-party trackers (HubSpot, GTM, Facebook
+    # Pixel, Google Ads) are dead weight on a CPU-starved instance.
+    block_heavy_resources(context, allow_scripts_from="beckett.com")
     page = context.new_page()
     page.set_default_timeout(45000)
     try:
