@@ -46,6 +46,14 @@ _browser_lock = threading.Lock()
 _session_state = None
 _session_state_lock = threading.Lock()
 
+# A lookup page is expensive to set up (new context + navigate to establish
+# the beckett.com origin) but cheap to reuse -- fetch() calls don't need a
+# fresh page each time, so one authenticated page is kept warm across
+# requests instead of rebuilding it per lookup.
+_lookup_context = None
+_lookup_page = None
+_lookup_lock = threading.Lock()
+
 FETCH_SCRIPT = """
 async ({ url, method, body, headers }) => {
     const resp = await fetch(url, {
@@ -89,14 +97,16 @@ def set_session_state(state):
     global _session_state
     with _session_state_lock:
         _session_state = state
+    reset_lookup_page()
 
 
-def block_heavy_resources(context):
+def block_heavy_resources(context, block_scripts=False):
+    blocked_types = {"image", "font", "stylesheet", "media"}
+    if block_scripts:
+        blocked_types.add("script")
     context.route(
         "**/*",
-        lambda route: route.abort()
-        if route.request.resource_type in ("image", "font", "stylesheet", "media")
-        else route.continue_(),
+        lambda route: route.abort() if route.request.resource_type in blocked_types else route.continue_(),
     )
 
 
@@ -139,13 +149,32 @@ def perform_login(browser, email, password):
         context.close()
 
 
-def new_authenticated_page(browser):
-    context = browser.new_context(storage_state=get_session_state())
-    block_heavy_resources(context)
-    page = context.new_page()
-    page.set_default_timeout(45000)
-    page.goto(f"{BASE}/", wait_until="domcontentloaded")
-    return context, page
+def get_lookup_page(browser):
+    global _lookup_context, _lookup_page
+    with _lookup_lock:
+        if _lookup_page is None:
+            context = browser.new_context(storage_state=get_session_state())
+            block_heavy_resources(context, block_scripts=True)
+            page = context.new_page()
+            page.set_default_timeout(45000)
+            # Any same-origin page works to establish cookies/CORS for our
+            # fetch() calls -- robots.txt is tiny and has zero third-party
+            # tracker scripts, unlike the homepage.
+            page.goto(f"{BASE}/robots.txt", wait_until="domcontentloaded")
+            _lookup_context, _lookup_page = context, page
+        return _lookup_page
+
+
+def reset_lookup_page():
+    global _lookup_context, _lookup_page
+    with _lookup_lock:
+        if _lookup_context is not None:
+            try:
+                _lookup_context.close()
+            except Exception:
+                pass
+        _lookup_context = None
+        _lookup_page = None
 
 
 def api_call(page, method, url, body=None, headers=None):
@@ -173,7 +202,7 @@ def fetch_grading_order(page, job_id, user_id):
     return api_call(page, "GET", f"{BASE}/api/account/grading_order/{job_id}", headers=headers)
 
 
-def job_id_for_submission(page, submission_id, user_id, limit=50):
+def job_id_for_submission(page, submission_id, user_id, limit=100):
     page_num = 1
     headers = {"user-id": user_id, **csrf_header(page)}
     while True:
@@ -211,7 +240,7 @@ def index():
 
 def _do_lookup(submission_id, job_id):
     browser = get_browser()
-    context, page = new_authenticated_page(browser)
+    page = get_lookup_page(browser)
     try:
         user_id = get_user_id(page)
         resolved_job_id = job_id
@@ -220,8 +249,11 @@ def _do_lookup(submission_id, job_id):
             if resolved_job_id is None:
                 return {"error": f"No order found for submission {submission_id}"}, 404
         return fetch_grading_order(page, resolved_job_id, user_id), 200
-    finally:
-        context.close()
+    except Exception:
+        # Drop the warm page on any failure so the next request starts
+        # clean instead of repeating whatever went wrong.
+        reset_lookup_page()
+        raise
 
 
 @app.route("/api/lookup")
