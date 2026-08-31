@@ -302,14 +302,6 @@ def _do_refresh(email, password):
 
 @app.route("/api/refresh-session", methods=["POST"])
 def refresh_session():
-    expected_token = os.environ.get("REFRESH_TOKEN")
-    if not expected_token:
-        return jsonify({"error": "Server isn't configured with REFRESH_TOKEN"}), 500
-
-    given_token = request.headers.get("x-refresh-token")
-    if given_token != expected_token:
-        return jsonify({"error": "Invalid refresh token"}), 403
-
     email = os.environ.get("BECKETT_EMAIL")
     password = os.environ.get("BECKETT_PASSWORD")
     if not email or not password:
