@@ -2,6 +2,7 @@ services:
   - type: web
     name: bgs-lookup
     env: python
+    region: oregon # beckett.com's CloudFront flat-blocks Render's Singapore region -- Oregon works
     plan: free
     rootDir: web
     buildCommand: pip install -r requirements.txt && playwright install chromium
