@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: bgs-lookup
+    env: python
+    plan: free
+    rootDir: web
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: BECKETT_COOKIES
+        sync: false

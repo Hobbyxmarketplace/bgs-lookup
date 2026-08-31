@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BGS Submission Lookup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="header">
+      <h1>BGS Submission Lookup</h1>
+      <p class="subtitle">Look up a Beckett grading order by submission ID or job ID.</p>
+    </header>
+
+    <form id="search-form" class="search-form">
+      <select id="id-type" name="id-type">
+        <option value="submissionId">Submission ID</option>
+        <option value="jobId">Job ID</option>
+      </select>
+      <input
+        id="id-value"
+        name="id-value"
+        type="text"
+        inputmode="numeric"
+        placeholder="e.g. 7351944"
+        autocomplete="off"
+        required
+      />
+      <button type="submit" id="search-btn">Search</button>
+    </form>
+
+    <div id="status" class="status" hidden></div>
+
+    <section id="results" class="results" hidden>
+      <div id="job-summary" class="card job-summary"></div>
+      <div id="items-grid" class="items-grid"></div>
+
+      <details class="raw-json">
+        <summary>Raw JSON response</summary>
+        <pre id="raw-json"></pre>
+      </details>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>

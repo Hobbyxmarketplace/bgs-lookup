@@ -1,0 +1,241 @@
+:root {
+  --bg: #0f1115;
+  --surface: #171a21;
+  --surface-2: #1f232c;
+  --border: #2a2f3a;
+  --text: #e8eaed;
+  --text-dim: #9aa1ac;
+  --accent: #4f8cff;
+  --error: #ff5c5c;
+  --grade-top: #d4af37;
+  --grade-high: #4caf50;
+  --grade-mid: #4f8cff;
+  --grade-low: #9aa1ac;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.page {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 32px 20px 80px;
+}
+
+.header h1 {
+  margin: 0 0 4px;
+  font-size: 1.6rem;
+}
+
+.subtitle {
+  margin: 0 0 24px;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+}
+
+.search-form {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.search-form select,
+.search-form input,
+.search-form button {
+  font-size: 1rem;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+}
+
+.search-form input {
+  flex: 1;
+}
+
+.search-form button {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.search-form button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.status {
+  padding: 12px 14px;
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+}
+
+.status.error {
+  background: rgba(255, 92, 92, 0.12);
+  color: var(--error);
+  border: 1px solid rgba(255, 92, 92, 0.3);
+}
+
+.status.loading {
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+}
+
+.job-summary {
+  margin-bottom: 20px;
+}
+
+.job-summary h2 {
+  margin: 0 0 12px;
+  font-size: 1.1rem;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px 20px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.field-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+
+.field-value {
+  font-size: 0.95rem;
+}
+
+.items-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.item-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 4px;
+  overflow: hidden;
+}
+
+.item-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.item-table tr {
+  border-bottom: 1px solid var(--border);
+}
+
+.item-table tr:last-child {
+  border-bottom: none;
+}
+
+.item-table tr:nth-child(even) {
+  background: var(--surface-2);
+}
+
+.item-table th,
+.item-table td {
+  padding: 7px 10px;
+  text-align: left;
+  vertical-align: middle;
+}
+
+.item-table th {
+  width: 220px;
+  color: var(--text-dim);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  font-weight: 600;
+  white-space: normal;
+  word-break: break-word;
+}
+
+.item-table td {
+  color: var(--text);
+  word-break: break-word;
+}
+
+@media (max-width: 700px) {
+  .items-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.image-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.image-cell:hover {
+  text-decoration: underline;
+}
+
+.cell-thumb {
+  flex: 0 0 auto;
+  width: 32px;
+  height: 42px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: var(--surface-2);
+}
+
+.raw-json {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+.raw-json summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.raw-json pre {
+  margin: 12px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  max-height: 480px;
+  overflow: auto;
+}
