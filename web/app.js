@@ -176,3 +176,46 @@ form.addEventListener("submit", (e) => {
   if (!value) return;
   runSearch(idType.value, value);
 });
+
+const refreshBtn = document.getElementById("refresh-btn");
+const refreshStatusEl = document.getElementById("refresh-status");
+
+function getRefreshToken() {
+  let token = localStorage.getItem("bgs_refresh_token");
+  if (!token) {
+    token = window.prompt("Enter the refresh token (the REFRESH_TOKEN set on the server):");
+    if (token) localStorage.setItem("bgs_refresh_token", token);
+  }
+  return token;
+}
+
+refreshBtn.addEventListener("click", async () => {
+  const token = getRefreshToken();
+  if (!token) return;
+
+  refreshBtn.disabled = true;
+  refreshStatusEl.hidden = false;
+  refreshStatusEl.className = "status loading";
+  refreshStatusEl.textContent = "Refreshing session…";
+
+  try {
+    const resp = await fetch("/api/refresh-session", {
+      method: "POST",
+      headers: { "x-refresh-token": token },
+    });
+    const data = await resp.json();
+
+    if (!resp.ok) {
+      if (resp.status === 403) localStorage.removeItem("bgs_refresh_token");
+      throw new Error(data.error || `Request failed (${resp.status})`);
+    }
+
+    refreshStatusEl.className = "status";
+    refreshStatusEl.textContent = data.message || "Session refreshed.";
+  } catch (err) {
+    refreshStatusEl.className = "status error";
+    refreshStatusEl.textContent = err.message || String(err);
+  } finally {
+    refreshBtn.disabled = false;
+  }
+});

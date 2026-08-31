@@ -9,3 +9,9 @@ services:
     envVars:
       - key: BECKETT_SESSION_STATE
         sync: false
+      - key: BECKETT_EMAIL
+        sync: false
+      - key: BECKETT_PASSWORD
+        sync: false
+      - key: REFRESH_TOKEN
+        sync: false

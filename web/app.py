@@ -10,11 +10,17 @@ testing the same code from a residential IP (works) vs Render's IP (403),
 and a scripted client (blocked) vs headless Chromium (works) from the same
 datacenter IP.
 
-A pre-captured session (BECKETT_SESSION_STATE -- the full contents of
-output/storage_state.json, produced by auto_login.py and pushed by the
-GitHub Actions refresh workflow) is loaded into the browser context so no
-login happens per request.
+A session is seeded at boot from BECKETT_SESSION_STATE (the full contents
+of output/storage_state.json, produced by auto_login.py) so most requests
+don't need to log in first. When that session goes stale, POST
+/api/refresh-session (guarded by REFRESH_TOKEN) drives a real login through
+the same browser and swaps in the fresh session in memory -- no redeploy
+needed. That in-memory session is lost on the next cold start (Render's
+free tier sleeps after ~15min idle), so the seed env var still matters for
+a good first request; refresh scripts/push_session_to_render.py by hand
+occasionally, or just click "Refresh session" in the UI when needed.
 """
+import concurrent.futures
 import json
 import os
 import threading
@@ -23,12 +29,21 @@ from flask import Flask, jsonify, request
 from playwright.sync_api import sync_playwright
 
 BASE = "https://www.beckett.com"
+LOGIN_URL = f"{BASE}/login"
 
 app = Flask(__name__, static_folder=".", static_url_path="")
+
+# Playwright's sync API is pinned to whichever OS thread started it, but
+# Flask's request threads aren't guaranteed stable across requests -- so
+# every Playwright call is funneled through this one dedicated thread.
+_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
 _playwright = None
 _browser = None
 _browser_lock = threading.Lock()
+
+_session_state = None
+_session_state_lock = threading.Lock()
 
 FETCH_SCRIPT = """
 async ({ url, method, body, headers }) => {
@@ -56,15 +71,56 @@ def get_browser():
     return _browser
 
 
-def load_storage_state():
-    raw = os.environ.get("BECKETT_SESSION_STATE")
-    if not raw:
-        raise RuntimeError("Missing BECKETT_SESSION_STATE environment variable")
-    return json.loads(raw)
+def get_session_state():
+    global _session_state
+    with _session_state_lock:
+        if _session_state is None:
+            raw = os.environ.get("BECKETT_SESSION_STATE")
+            if not raw:
+                raise RuntimeError(
+                    'No session available -- click "Refresh session", or set BECKETT_SESSION_STATE.'
+                )
+            _session_state = json.loads(raw)
+        return _session_state
+
+
+def set_session_state(state):
+    global _session_state
+    with _session_state_lock:
+        _session_state = state
+
+
+def perform_login(browser, email, password):
+    context = browser.new_context()
+    page = context.new_page()
+    try:
+        page.goto(LOGIN_URL, wait_until="networkidle")
+        for selector in ["text=Accept All Cookies", "text=Allow All"]:
+            try:
+                page.click(selector, timeout=3000)
+                break
+            except Exception:
+                pass
+
+        page.click("#loginEmail")
+        page.type("#loginEmail", email, delay=30)
+        page.click("#loginPassword")
+        page.type("#loginPassword", password, delay=30)
+        page.wait_for_selector("#btn_login:not([disabled])", timeout=10000)
+
+        with page.expect_navigation(wait_until="networkidle"):
+            page.click("#btn_login")
+
+        if "/login" in page.url:
+            raise RuntimeError("Login failed -- check BECKETT_EMAIL / BECKETT_PASSWORD")
+
+        return context.storage_state()
+    finally:
+        context.close()
 
 
 def new_authenticated_page(browser):
-    context = browser.new_context(storage_state=load_storage_state())
+    context = browser.new_context(storage_state=get_session_state())
     context.route(
         "**/*",
         lambda route: route.abort()
@@ -137,6 +193,21 @@ def index():
     return app.send_static_file("index.html")
 
 
+def _do_lookup(submission_id, job_id):
+    browser = get_browser()
+    context, page = new_authenticated_page(browser)
+    try:
+        user_id = get_user_id(page)
+        resolved_job_id = job_id
+        if not resolved_job_id:
+            resolved_job_id = job_id_for_submission(page, submission_id, user_id)
+            if resolved_job_id is None:
+                return {"error": f"No order found for submission {submission_id}"}, 404
+        return fetch_grading_order(page, resolved_job_id, user_id), 200
+    finally:
+        context.close()
+
+
 @app.route("/api/lookup")
 def lookup():
     submission_id = request.args.get("submissionId")
@@ -145,25 +216,40 @@ def lookup():
     if not submission_id and not job_id:
         return jsonify({"error": "Provide ?submissionId= or ?jobId="}), 400
 
-    context = None
     try:
-        browser = get_browser()
-        context, page = new_authenticated_page(browser)
-
-        user_id = get_user_id(page)
-        resolved_job_id = job_id
-        if not resolved_job_id:
-            resolved_job_id = job_id_for_submission(page, submission_id, user_id)
-            if resolved_job_id is None:
-                return jsonify({"error": f"No order found for submission {submission_id}"}), 404
-
-        data = fetch_grading_order(page, resolved_job_id, user_id)
-        return jsonify(data)
+        data, status = _executor.submit(_do_lookup, submission_id, job_id).result()
+        return jsonify(data), status
     except Exception as e:
         return jsonify({"error": str(e)}), 502
-    finally:
-        if context is not None:
-            context.close()
+
+
+def _do_refresh(email, password):
+    browser = get_browser()
+    state = perform_login(browser, email, password)
+    set_session_state(state)
+    return {"ok": True, "message": "Session refreshed."}, 200
+
+
+@app.route("/api/refresh-session", methods=["POST"])
+def refresh_session():
+    expected_token = os.environ.get("REFRESH_TOKEN")
+    if not expected_token:
+        return jsonify({"error": "Server isn't configured with REFRESH_TOKEN"}), 500
+
+    given_token = request.headers.get("x-refresh-token")
+    if given_token != expected_token:
+        return jsonify({"error": "Invalid refresh token"}), 403
+
+    email = os.environ.get("BECKETT_EMAIL")
+    password = os.environ.get("BECKETT_PASSWORD")
+    if not email or not password:
+        return jsonify({"error": "Server isn't configured with BECKETT_EMAIL / BECKETT_PASSWORD"}), 500
+
+    try:
+        data, status = _executor.submit(_do_refresh, email, password).result()
+        return jsonify(data), status
+    except Exception as e:
+        return jsonify({"error": str(e)}), 502
 
 
 if __name__ == "__main__":

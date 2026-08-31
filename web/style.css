@@ -75,6 +75,38 @@ body {
   cursor: default;
 }
 
+.refresh-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.secondary-btn {
+  font-size: 0.85rem;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-dim);
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
+.secondary-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.refresh-row .status {
+  margin-bottom: 0;
+}
+
 .status {
   padding: 12px 14px;
   border-radius: 8px;

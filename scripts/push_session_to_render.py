@@ -1,11 +1,15 @@
 """
 Pushes a freshly captured beckett.com session (output/storage_state.json,
-produced by auto_login.py) to Render as the BECKETT_COOKIES env var on the
-deployed lookup service, then triggers a redeploy so it takes effect.
+produced by auto_login.py) to Render as the BECKETT_SESSION_STATE env var
+on the deployed lookup service, then triggers a redeploy so it takes
+effect as the seed for the next cold start.
 
-Meant to run right after auto_login.py, normally via the scheduled GitHub
-Actions workflow (.github/workflows/refresh-session.yml) so the deployed
-playground never needs a manual cookie paste.
+Optional, manual fallback: the deployed app can refresh its own in-memory
+session on demand via the "Refresh session" button in the UI (POST
+/api/refresh-session), which covers the common case without needing this
+script or a redeploy. Run this by hand if you want to push a fresh
+persisted seed anyway -- e.g. right before a period where the site will
+sit idle and cold-start.
 
 Requires env vars:
     RENDER_API_KEY     -- personal API key, from Render account settings
