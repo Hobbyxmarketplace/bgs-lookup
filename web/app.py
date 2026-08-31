@@ -113,7 +113,14 @@ def perform_login(browser, email, password):
             except Exception:
                 pass
 
-        page.click("#loginEmail")
+        try:
+            page.click("#loginEmail")
+        except Exception as e:
+            try:
+                snippet = page.inner_text("body")[:400]
+            except Exception:
+                snippet = "<could not read body>"
+            raise RuntimeError(f"{e} | url={page.url} | body_snippet={snippet!r}") from e
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
         page.type("#loginPassword", password, delay=30)
