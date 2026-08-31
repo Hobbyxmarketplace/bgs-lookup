@@ -90,11 +90,22 @@ def set_session_state(state):
         _session_state = state
 
 
+def block_heavy_resources(context):
+    context.route(
+        "**/*",
+        lambda route: route.abort()
+        if route.request.resource_type in ("image", "font", "stylesheet", "media")
+        else route.continue_(),
+    )
+
+
 def perform_login(browser, email, password):
     context = browser.new_context()
+    block_heavy_resources(context)
     page = context.new_page()
+    page.set_default_timeout(45000)
     try:
-        page.goto(LOGIN_URL, wait_until="networkidle")
+        page.goto(LOGIN_URL, wait_until="domcontentloaded")
         for selector in ["text=Accept All Cookies", "text=Allow All"]:
             try:
                 page.click(selector, timeout=3000)
@@ -106,9 +117,9 @@ def perform_login(browser, email, password):
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
         page.type("#loginPassword", password, delay=30)
-        page.wait_for_selector("#btn_login:not([disabled])", timeout=10000)
+        page.wait_for_selector("#btn_login:not([disabled])", timeout=20000)
 
-        with page.expect_navigation(wait_until="networkidle"):
+        with page.expect_navigation(wait_until="domcontentloaded"):
             page.click("#btn_login")
 
         if "/login" in page.url:
@@ -121,13 +132,9 @@ def perform_login(browser, email, password):
 
 def new_authenticated_page(browser):
     context = browser.new_context(storage_state=get_session_state())
-    context.route(
-        "**/*",
-        lambda route: route.abort()
-        if route.request.resource_type in ("image", "font", "stylesheet", "media")
-        else route.continue_(),
-    )
+    block_heavy_resources(context)
     page = context.new_page()
+    page.set_default_timeout(45000)
     page.goto(f"{BASE}/", wait_until="domcontentloaded")
     return context, page
 
