@@ -25,7 +25,6 @@ import concurrent.futures
 import json
 import os
 import threading
-import time
 from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request
@@ -130,22 +129,16 @@ def perform_login(browser, email, password):
     block_heavy_resources(context, allow_scripts_from="beckett.com")
     page = context.new_page()
     page.set_default_timeout(45000)
-    t0 = time.time()
-
-    def checkpoint(label):
-        print(f"[perform_login] {label}: {time.time() - t0:.2f}s", flush=True)
-
     try:
         page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        checkpoint("goto complete")
 
-        for selector in ["text=Accept All Cookies", "text=Allow All"]:
-            try:
-                page.click(selector, timeout=3000)
-                break
-            except Exception:
-                pass
-        checkpoint("cookie consent handled")
+        # Only wait once, combining both known button texts -- a banner
+        # that isn't there shouldn't cost two separate timeouts.
+        try:
+            consent_btn = page.locator("text=Accept All Cookies").or_(page.locator("text=Allow All"))
+            consent_btn.first.click(timeout=1500)
+        except Exception:
+            pass
 
         try:
             page.click("#loginEmail")
@@ -155,17 +148,16 @@ def perform_login(browser, email, password):
             except Exception:
                 snippet = "<could not read body>"
             raise RuntimeError(f"{e} | url={page.url} | body_snippet={snippet!r}") from e
-        checkpoint("clicked #loginEmail")
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
         page.type("#loginPassword", password, delay=30)
-        checkpoint("typed credentials")
         page.wait_for_selector("#btn_login:not([disabled])", timeout=20000)
-        checkpoint("submit button enabled")
 
-        with page.expect_navigation(wait_until="domcontentloaded"):
+        # "commit" (response headers received, cookies already applied) is
+        # enough -- we only need context.storage_state() afterward, not
+        # the resulting homepage to actually render.
+        with page.expect_navigation(wait_until="commit"):
             page.click("#btn_login")
-        checkpoint("post-submit navigation complete")
 
         if "/login" in page.url:
             raise RuntimeError("Login failed -- check BECKETT_EMAIL / BECKETT_PASSWORD")
@@ -212,13 +204,17 @@ def api_call(page, method, url, body=None, headers=None):
     return json.loads(result["text"])
 
 
+def get_cookie(page, name):
+    return next((c["value"] for c in page.context.cookies() if c["name"] == name), None)
+
+
 def csrf_header(page):
-    token = next((c["value"] for c in page.context.cookies() if c["name"] == "csrf-token"), None)
+    token = get_cookie(page, "csrf-token")
     return {"csrf-token": token} if token else {}
 
 
 def get_user_id(page):
-    mmr = next((c["value"] for c in page.context.cookies() if c["name"] == "mmr"), "")
+    mmr = get_cookie(page, "mmr") or ""
     data = api_call(page, "POST", f"{BASE}/api/account/data", {"mmr": mmr}, headers=csrf_header(page))
     return data["user_data"]["user_id"]
 
