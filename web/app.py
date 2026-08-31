@@ -4,11 +4,12 @@ submission/job lookups to beckett.com.
 
 Calls run through a real headless Chromium page (Playwright), executing
 fetch() inside the authenticated page's own JS context. beckett.com's WAF
-blocks plain HTTP clients (Node's https, Python's requests) when called from
-cloud/datacenter IPs, but lets real-browser traffic through -- confirmed by
-testing the same code from a residential IP (works) vs Render's IP (403),
-and a scripted client (blocked) vs headless Chromium (works) from the same
-datacenter IP.
+blocks plain HTTP clients (Node's https, Python's requests), and separately
+CloudFront IP-blocks some cloud regions outright regardless of client --
+confirmed Render's Singapore region gets a flat 403 on every request (even
+real Chromium, even an already-authenticated session), while Render's
+Oregon region works fine. Deploy this to a US region if you ever recreate
+the service.
 
 A session is seeded at boot from BECKETT_SESSION_STATE (the full contents
 of output/storage_state.json, produced by auto_login.py) so most requests
@@ -105,9 +106,7 @@ def perform_login(browser, email, password):
     page = context.new_page()
     page.set_default_timeout(45000)
     try:
-        print("[perform_login] launching goto...", flush=True)
         page.goto(LOGIN_URL, wait_until="domcontentloaded")
-        print(f"[perform_login] landed on: {page.url}", flush=True)
 
         for selector in ["text=Accept All Cookies", "text=Allow All"]:
             try:
@@ -117,13 +116,12 @@ def perform_login(browser, email, password):
                 pass
 
         try:
-            page.click("#loginEmail", timeout=8000)
+            page.click("#loginEmail")
         except Exception as e:
             try:
                 snippet = page.inner_text("body")[:400]
             except Exception:
                 snippet = "<could not read body>"
-            print(f"[perform_login] FAILED at #loginEmail | url={page.url} | body_snippet={snippet!r}", flush=True)
             raise RuntimeError(f"{e} | url={page.url} | body_snippet={snippet!r}") from e
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
