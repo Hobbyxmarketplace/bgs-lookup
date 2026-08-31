@@ -4,7 +4,7 @@ services:
     env: python
     plan: free
     rootDir: web
-    buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
+    buildCommand: pip install -r requirements.txt && playwright install chromium
     startCommand: gunicorn app:app --timeout 60
     envVars:
       - key: PLAYWRIGHT_BROWSERS_PATH
