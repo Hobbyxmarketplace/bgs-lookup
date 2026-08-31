@@ -25,6 +25,7 @@ import concurrent.futures
 import json
 import os
 import threading
+import time
 from urllib.parse import urlparse
 
 from flask import Flask, jsonify, request
@@ -129,8 +130,14 @@ def perform_login(browser, email, password):
     block_heavy_resources(context, allow_scripts_from="beckett.com")
     page = context.new_page()
     page.set_default_timeout(45000)
+    t0 = time.time()
+
+    def checkpoint(label):
+        print(f"[perform_login] {label}: {time.time() - t0:.2f}s", flush=True)
+
     try:
         page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        checkpoint("goto complete")
 
         for selector in ["text=Accept All Cookies", "text=Allow All"]:
             try:
@@ -138,6 +145,7 @@ def perform_login(browser, email, password):
                 break
             except Exception:
                 pass
+        checkpoint("cookie consent handled")
 
         try:
             page.click("#loginEmail")
@@ -147,13 +155,17 @@ def perform_login(browser, email, password):
             except Exception:
                 snippet = "<could not read body>"
             raise RuntimeError(f"{e} | url={page.url} | body_snippet={snippet!r}") from e
+        checkpoint("clicked #loginEmail")
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
         page.type("#loginPassword", password, delay=30)
+        checkpoint("typed credentials")
         page.wait_for_selector("#btn_login:not([disabled])", timeout=20000)
+        checkpoint("submit button enabled")
 
         with page.expect_navigation(wait_until="domcontentloaded"):
             page.click("#btn_login")
+        checkpoint("post-submit navigation complete")
 
         if "/login" in page.url:
             raise RuntimeError("Login failed -- check BECKETT_EMAIL / BECKETT_PASSWORD")
