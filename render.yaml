@@ -7,6 +7,8 @@ services:
     buildCommand: pip install -r requirements.txt && playwright install --with-deps chromium
     startCommand: gunicorn app:app --timeout 60
     envVars:
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: "0"
       - key: BECKETT_SESSION_STATE
         sync: false
       - key: BECKETT_EMAIL
