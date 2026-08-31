@@ -105,7 +105,10 @@ def perform_login(browser, email, password):
     page = context.new_page()
     page.set_default_timeout(45000)
     try:
+        print("[perform_login] launching goto...", flush=True)
         page.goto(LOGIN_URL, wait_until="domcontentloaded")
+        print(f"[perform_login] landed on: {page.url}", flush=True)
+
         for selector in ["text=Accept All Cookies", "text=Allow All"]:
             try:
                 page.click(selector, timeout=3000)
@@ -114,12 +117,13 @@ def perform_login(browser, email, password):
                 pass
 
         try:
-            page.click("#loginEmail")
+            page.click("#loginEmail", timeout=8000)
         except Exception as e:
             try:
                 snippet = page.inner_text("body")[:400]
             except Exception:
                 snippet = "<could not read body>"
+            print(f"[perform_login] FAILED at #loginEmail | url={page.url} | body_snippet={snippet!r}", flush=True)
             raise RuntimeError(f"{e} | url={page.url} | body_snippet={snippet!r}") from e
         page.type("#loginEmail", email, delay=30)
         page.click("#loginPassword")
