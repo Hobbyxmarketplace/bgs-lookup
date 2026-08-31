@@ -1,8 +1,10 @@
 """
 Fully automated login to beckett.com using Playwright, driven by credentials
-in .env (BECKETT_EMAIL / BECKETT_PASSWORD). Fills the real login form
-(id=loginEmail, id=loginPassword, id=btn_login) so any hidden CSRF/anti-bot
-fields on the page are handled the same way a real browser session would.
+in BECKETT_EMAIL / BECKETT_PASSWORD -- read from the environment if set
+(e.g. GitHub Actions secrets), otherwise from a local .env file. Fills the
+real login form (id=loginEmail, id=loginPassword, id=btn_login) so any
+hidden CSRF/anti-bot fields on the page are handled the same way a real
+browser session would.
 
 Saves the resulting session to output/storage_state.json, which
 fetch_beckett.py then reuses for API calls.
@@ -24,13 +26,14 @@ ENV_FILE = ROOT / ".env"
 
 
 def load_env():
-    env = {}
-    for line in ENV_FILE.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, _, value = line.partition("=")
-        env[key.strip()] = value.strip()
+    env = dict(os.environ)
+    if ENV_FILE.exists():
+        for line in ENV_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            env[key.strip()] = value.strip()
     return env
 
 
@@ -39,7 +42,7 @@ def main():
     email = env.get("BECKETT_EMAIL")
     password = env.get("BECKETT_PASSWORD")
     if not email or not password:
-        raise SystemExit(f"BECKETT_EMAIL / BECKETT_PASSWORD not set in {ENV_FILE}")
+        raise SystemExit("BECKETT_EMAIL / BECKETT_PASSWORD not set (checked .env and the environment)")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
